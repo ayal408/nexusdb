@@ -1,0 +1,200 @@
+"""Functional tests for the relational stack against real (in-memory) SQLite.
+
+Unlike the mocked-adapter unit tests elsewhere in this package, these exercise
+the real :mod:`sqlalchemy` async engine end-to-end (real SQL, real constraint
+violations, real transactions) without requiring Docker, since SQLite runs
+in-process. This is what proves :class:`SQLAlchemyRepository`,
+:class:`SQLAlchemyUnitOfWork`, and the exception mapper actually work
+together correctly, complementing the mocked tests (which check call shape)
+and the Testcontainers integration tests (which check real Postgres/Mongo/
+Qdrant wire behavior).
+"""
+
+from __future__ import annotations
+
+import uuid
+from collections.abc import AsyncIterator
+
+import pytest
+import pytest_asyncio
+from sqlalchemy import Column, DateTime, Integer, MetaData, String, Table, Uuid
+
+from nexusdb.adapters.relational.sqlite import SQLiteAdapter
+from nexusdb.core.config import ConnectionConfig, NodeConfig
+from nexusdb.core.enums import DatabaseKind, RoutingRole
+from nexusdb.core.exceptions import DuplicateRecordError, RecordNotFoundError
+from nexusdb.models.base import Entity
+from nexusdb.repositories.relational_repository import SQLAlchemyRepository
+from nexusdb.uow.sqlalchemy_uow import SQLAlchemyUnitOfWork
+
+pytestmark = pytest.mark.unit
+
+_metadata = MetaData()
+_widgets_table = Table(
+    "widgets",
+    _metadata,
+    Column("id", Uuid, primary_key=True),
+    Column("tenant_id", String, nullable=True),
+    # timezone=True: Entity.created_at/updated_at are tz-aware (datetime.now(UTC)).
+    Column("created_at", DateTime(timezone=True)),
+    Column("updated_at", DateTime(timezone=True)),
+    Column("version", Integer),
+    Column("name", String, unique=True),
+    Column("quantity", Integer),
+)
+
+
+class Widget(Entity):
+    name: str
+    quantity: int = 0
+
+
+@pytest_asyncio.fixture
+async def sqlite_adapter() -> AsyncIterator[SQLiteAdapter]:
+    config = ConnectionConfig(
+        name="test",
+        kind=DatabaseKind.SQLITE,
+        nodes=[NodeConfig(dsn="sqlite+aiosqlite:///:memory:", role=RoutingRole.MASTER)],
+    )
+    adapter = SQLiteAdapter(config)
+    await adapter.connect()
+    async with adapter.acquire() as session:
+        await session.run_sync(lambda sync_session: _metadata.create_all(sync_session.connection()))
+    yield adapter
+    await adapter.disconnect()
+
+
+@pytest.fixture
+def widget_sql_repo(sqlite_adapter: SQLiteAdapter) -> SQLAlchemyRepository[Widget, uuid.UUID]:
+    return SQLAlchemyRepository(sqlite_adapter, _widgets_table, Widget)
+
+
+async def test_create_and_get_round_trip(widget_sql_repo: SQLAlchemyRepository) -> None:
+    widget = Widget(name="alpha", quantity=1)
+
+    await widget_sql_repo.create(widget)
+    fetched = await widget_sql_repo.get_by_id(widget.id)
+
+    assert fetched is not None
+    assert fetched.id == widget.id
+    assert fetched.name == "alpha"
+
+
+async def test_unique_constraint_violation_maps_to_duplicate_record_error(
+    widget_sql_repo: SQLAlchemyRepository,
+) -> None:
+    await widget_sql_repo.create(Widget(name="dup", quantity=1))
+
+    with pytest.raises(DuplicateRecordError):
+        await widget_sql_repo.create(Widget(name="dup", quantity=2))
+
+
+async def test_update_missing_row_raises_record_not_found(widget_sql_repo: SQLAlchemyRepository) -> None:
+    with pytest.raises(RecordNotFoundError):
+        await widget_sql_repo.update(uuid.uuid4(), {"quantity": 5})
+
+
+async def test_update_persists_changes(widget_sql_repo: SQLAlchemyRepository) -> None:
+    widget = await widget_sql_repo.create(Widget(name="before", quantity=1))
+
+    updated = await widget_sql_repo.update(widget.id, {"quantity": 42})
+
+    assert updated.quantity == 42
+    refetched = await widget_sql_repo.get_by_id(widget.id)
+    assert refetched.quantity == 42
+
+
+async def test_delete_is_committed_immediately_outside_a_uow(widget_sql_repo: SQLAlchemyRepository) -> None:
+    widget = await widget_sql_repo.create(Widget(name="deleteme", quantity=1))
+
+    assert await widget_sql_repo.delete(widget.id) is True
+    assert await widget_sql_repo.get_by_id(widget.id) is None
+
+
+async def test_bulk_create_reports_partial_success_and_keeps_successful_rows(
+    widget_sql_repo: SQLAlchemyRepository,
+) -> None:
+    w1 = Widget(name="dup2", quantity=1)
+    w2 = Widget(name="dup2", quantity=2)  # collides with w1 on the unique name column
+    w3 = Widget(name="unique2", quantity=3)
+
+    result = await widget_sql_repo.bulk_create([w1, w2, w3])
+
+    assert result.success_count == 2
+    assert result.failure_count == 1
+    # The savepoint-per-item strategy must not roll back the whole batch:
+    assert await widget_sql_repo.get_by_id(w1.id) is not None
+    assert await widget_sql_repo.get_by_id(w3.id) is not None
+
+
+async def test_bulk_delete_returns_count_removed(widget_sql_repo: SQLAlchemyRepository) -> None:
+    widgets = [Widget(name=f"bulk-{i}", quantity=i) for i in range(3)]
+    await widget_sql_repo.bulk_create(widgets)
+
+    deleted = await widget_sql_repo.bulk_delete([w.id for w in widgets])
+
+    assert deleted == 3
+
+
+async def test_find_with_criteria_and_pagination(widget_sql_repo: SQLAlchemyRepository) -> None:
+    for i in range(5):
+        await widget_sql_repo.create(Widget(name=f"page-{i}", quantity=1))
+
+    page = await widget_sql_repo.find({"quantity": 1}, limit=2, offset=1)
+
+    assert page.total == 5
+    assert len(page.items) == 2
+    assert page.has_more is True
+
+
+async def test_uow_commit_persists_changes(sqlite_adapter: SQLiteAdapter, widget_sql_repo) -> None:
+    widget = Widget(name="committed", quantity=1)
+
+    async with SQLAlchemyUnitOfWork(sqlite_adapter) as uow:
+        await widget_sql_repo.create(widget)
+        await uow.commit()
+
+    assert await widget_sql_repo.get_by_id(widget.id) is not None
+
+
+async def test_uow_rollback_discards_changes(sqlite_adapter: SQLiteAdapter, widget_sql_repo) -> None:
+    widget = Widget(name="rolledback", quantity=1)
+
+    async with SQLAlchemyUnitOfWork(sqlite_adapter) as uow:
+        await widget_sql_repo.create(widget)
+        await uow.rollback()
+
+    assert await widget_sql_repo.get_by_id(widget.id) is None
+
+
+async def test_uow_implicit_rollback_on_exception(sqlite_adapter: SQLiteAdapter, widget_sql_repo) -> None:
+    widget = Widget(name="exploded", quantity=1)
+
+    with pytest.raises(ValueError):
+        async with SQLAlchemyUnitOfWork(sqlite_adapter):
+            await widget_sql_repo.create(widget)
+            raise ValueError("business rule failed after the write")
+
+    assert await widget_sql_repo.get_by_id(widget.id) is None
+
+
+async def test_uow_spans_multiple_repository_calls_atomically(
+    sqlite_adapter: SQLiteAdapter, widget_sql_repo
+) -> None:
+    w1 = Widget(name="atomic-1", quantity=1)
+    w2 = Widget(name="atomic-2", quantity=2)
+
+    async with SQLAlchemyUnitOfWork(sqlite_adapter) as uow:
+        await widget_sql_repo.create(w1)
+        await widget_sql_repo.create(w2)
+        await uow.commit()
+
+    assert await widget_sql_repo.get_by_id(w1.id) is not None
+    assert await widget_sql_repo.get_by_id(w2.id) is not None
+
+
+async def test_health_check_reports_healthy_when_connected(sqlite_adapter: SQLiteAdapter) -> None:
+    result = await sqlite_adapter.health_check()
+
+    assert str(result.status) == "healthy"
+    assert result.latency_ms >= 0
