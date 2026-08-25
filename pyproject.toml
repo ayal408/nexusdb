@@ -33,7 +33,7 @@ dependencies = [
     # Observability
     "structlog>=24.1",
     "opentelemetry-api>=1.25",
-    "opentelemetry-sdk>=1.25",
+    "opentelemetry-sdk>=1.44.0",
     # Resilience
     "tenacity>=8.3",
     # CLI
