@@ -8,7 +8,14 @@ Public surface is re-exported here so application code can do::
 from __future__ import annotations
 
 from nexusdb.core import exception_mapper as _exception_mapper  # noqa: F401  (bootstraps mappers)
-from nexusdb.core.config import ConnectionConfig, NexusDBSettings
+from nexusdb.core.config import (
+    CircuitBreakerConfig,
+    ConnectionConfig,
+    NexusDBSettings,
+    NodeConfig,
+    PoolConfig,
+    RetryConfig,
+)
 from nexusdb.core.context import correlation_scope, get_correlation_id, tenant_scope
 from nexusdb.core.enums import DatabaseKind, HealthStatus, RoutingRole
 from nexusdb.core.exceptions import (
@@ -33,6 +40,10 @@ __all__ = [
     # config / settings
     "ConnectionConfig",
     "NexusDBSettings",
+    "NodeConfig",
+    "PoolConfig",
+    "RetryConfig",
+    "CircuitBreakerConfig",
     # context
     "correlation_scope",
     "get_correlation_id",

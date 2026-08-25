@@ -70,14 +70,17 @@ dev = [
     "ruff>=0.5",
     "faker>=25.0",
     "httpx>=0.27",
+    "pre-commit>=3.7",
 ]
 
 [project.scripts]
 nexusdb = "nexusdb.cli.main:app"
 
 [project.urls]
-Homepage = "https://example.com/nexusdb"
-Repository = "https://example.com/nexusdb"
+Homepage = "https://github.com/ayal408/nexusdb"
+Repository = "https://github.com/ayal408/nexusdb"
+Changelog = "https://github.com/ayal408/nexusdb/blob/main/CHANGELOG.md"
+Issues = "https://github.com/ayal408/nexusdb/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/nexusdb"]

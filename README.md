@@ -1,13 +1,12 @@
 # nexusdb
 
+[![CI](https://github.com/ayal408/nexusdb/actions/workflows/ci.yml/badge.svg)](https://github.com/ayal408/nexusdb/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](pyproject.toml)
+
 An enterprise-grade, multi-database Python library that provides a unified
 interface and repository pattern over relational (PostgreSQL/MySQL/SQLite),
 document (MongoDB), and vector (Qdrant) databases.
-
-> **Status:** foundational scaffold — core interfaces, exception mapping,
-> resilience primitives, and the test harness are in place. Concrete adapters
-> (Postgres/MySQL/SQLite/MongoDB/Qdrant), the SQLAlchemy Unit of Work, Redis
-> cache, and the outbox relay are the next milestones.
 
 ## Why
 
@@ -57,6 +56,31 @@ pip install -e ".[dev]"          # core + dev/test tooling
 pip install -e ".[postgres]"     # + asyncpg
 pip install -e ".[all]"          # everything
 ```
+
+## Quickstart
+
+```python
+from nexusdb import ConnectionConfig, DatabaseFactory, DatabaseKind, Entity, NodeConfig, RoutingRole
+from nexusdb.repositories.relational_repository import SQLAlchemyRepository
+
+class Widget(Entity):
+    name: str
+    quantity: int = 0
+
+config = ConnectionConfig(
+    name="primary",
+    kind=DatabaseKind.SQLITE,
+    nodes=[NodeConfig(dsn="sqlite+aiosqlite:///:memory:", role=RoutingRole.MASTER)],
+)
+
+async with DatabaseFactory([config]) as factory:
+    repo = SQLAlchemyRepository(factory.get("primary"), widgets_table, Widget)
+    widget = await repo.create(Widget(name="gizmo", quantity=10))
+```
+
+See [`examples/quickstart.py`](examples/quickstart.py) for a complete, runnable
+version (table creation, CRUD, exception handling, and a transactional Unit
+of Work) — `python examples/quickstart.py` after `pip install -e ".[sqlite]"`.
 
 ## Testing
 
