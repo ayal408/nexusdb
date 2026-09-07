@@ -69,7 +69,7 @@ dev = [
     "types-PyYAML>=6.0",
     "ruff>=0.5",
     "faker>=25.0",
-    "httpx>=0.27",
+    "httpx>=0.28.1",
     "pre-commit>=3.7",
 ]
 
