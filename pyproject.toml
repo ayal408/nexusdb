@@ -53,7 +53,7 @@ vector = ["qdrant-client>=1.9"]
 cache = ["redis[hiredis]>=5.0"]
 otel-exporters = [
     "opentelemetry-exporter-otlp>=1.25",
-    "opentelemetry-instrumentation-sqlalchemy>=0.46b0",
+    "opentelemetry-instrumentation-sqlalchemy>=0.65b0",
 ]
 all = [
     "nexusdb[postgres,mysql,sqlite,mongodb,vector,cache,otel-exporters]",
