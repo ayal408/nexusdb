@@ -50,7 +50,7 @@ mysql = ["asyncmy>=0.2.9"]
 sqlite = ["aiosqlite>=0.20"]
 mongodb = ["motor>=3.4", "pymongo>=4.7"]
 vector = ["qdrant-client>=1.9"]
-cache = ["redis[hiredis]>=5.0"]
+cache = ["redis[hiredis]>=8.1.0"]
 otel-exporters = [
     "opentelemetry-exporter-otlp>=1.25",
     "opentelemetry-instrumentation-sqlalchemy>=0.65b0",
